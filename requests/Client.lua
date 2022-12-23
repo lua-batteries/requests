@@ -7,6 +7,7 @@
 -- @classmod requests.Client
 
 local socket = require('socket')
+local socket_url = require('socket.url')
 local http = require('socket.http')
 local ltn12 = require('ltn12')
 local Response = require("requests.response")
@@ -96,7 +97,8 @@ Client = {
     deflate = false,
     redirect = true,    
     referer = true,
-    cookies = false,
+    cookie_store = false,
+    cookie_provider = {},
 }
 
 --- Create request client with custom configuration table.
@@ -137,8 +139,26 @@ function Client:new(kwargs)
         self.referer = false
     end
     
-    if kwargs.cookies then
-        self.cookies = true
+    if kwargs.cookie_store then
+        self.cookie_store = true
+    end
+
+    if kwargs.cookie_provider then
+        assert(type(kwargs.cookie_provider) == "table", "cookie provider should be a table")
+
+        for host_name, cookies in pairs(kwargs.cookie_provider) do
+            for key, value in pairs(cookies) do
+                local host_cookies = ""
+
+                if host_cookies == "" then
+                    host_cookies = tostring(key) .. "=" .. tostring(value)
+                else
+                    host_cookies = host_cookies .. "; " .. tostring(key) .. "=" .. tostring(value)
+                end
+
+                self.cookie_provider[host_name] = host_cookies
+            end
+        end
     end
 
     -- self.tcp = socket.tcp()
@@ -196,13 +216,24 @@ function Client:request(method, url, kwargs)
     assert(type(url) == "string",  "url should be string")
     assert(type(kwargs) == "table", "requests options should be a table")
 
-    local request_headers = self.default_headers
+    local host_name = socket_url.parse(url).host
+    local request_headers = {}
+    
+    -- Shallow Copy
+    for key, value in pairs(self.default_headers) do
+        request_headers[key] = value
+    end
+
+    local stored_cookies = self.cookie_provider[host_name]
+
+    if stored_cookies then
+        request_headers["cookie"] = stored_cookies
+    end
 
     if kwargs.cookies then
         assert(type(kwargs.cookies) == "table", "requests cookies should be a table")
         local cookies = ""
 
-        -- TODO handle PATH=
         for key, value in pairs(kwargs.cookies) do
             if cookies == "" then
                 cookies = tostring(key) .. "=" .. tostring(value)
@@ -211,7 +242,7 @@ function Client:request(method, url, kwargs)
             end
         end
 
-        local stored_cookies = self.default_headers["cookie"] or self.default_headers["Cookie"]
+        local stored_cookies = request_headers["cookie"] or request_headers["Cookie"]
 
         if stored_cookies then
             if stored_cookies:sub(-1) == ";" then
@@ -224,19 +255,20 @@ function Client:request(method, url, kwargs)
         end
     end
 
+    if self.referer then
+        if self._refer_url then
+            request_headers["referer"] = self._refer_url
+        end
+        
+        self._refer_url = url
+    end
+
     if kwargs.queries then
         url = format_queries(url, kwargs.queries)
     end
 
     local response = { sink = {}, url = url }
 
-    if self.referer then
-        if self._refer_url then
-            self.default_headers["referer"] = self._refer_url
-        end
-        
-        self._refer_url = url
-    end
     local request_params = {
         method = method,
         url = url,
@@ -253,30 +285,28 @@ function Client:request(method, url, kwargs)
     ok, response.status_code, response.headers, response.http_status = http.request(request_params)
 
     if ok == 1 then
-        if self.cookies then
+        if self.cookie_store then
             local cookies = response.headers["set-cookie"] or response.headers["Set-Cookie"]
 
             if cookies then
-                local stored_cookies = self.default_headers["cookie"] or self.default_headers["Cookie"]
+                local stored_cookies = self.cookie_provider[host_name]
 
                 if stored_cookies then
                     if stored_cookies:sub(-1) == ";" then
-                        self.default_headers["cookie"] = stored_cookies .. " " .. cookies
+                        self.cookie_provider[host_name] = stored_cookies .. " " .. cookies
                     else
-                        self.default_headers["cookie"] = stored_cookies .. "; " .. cookies
+                        self.cookie_provider[host_name] = stored_cookies .. "; " .. cookies
                     end
                 else
-                    self.default_headers["cookie"] = cookies
+                    self.cookie_provider[host_name] = cookies
                 end
             end
         end
 
         return Response:new(response)
-    else
-        assert(ok, 'error in ' .. method .. ' request: ' .. response.status_code)
     end
-    
-    error("requests client error, report bugs at https://github.com/lua-batteries/requests/issues")
+
+    error(method .. " request to " .. response.url .. " failed because " .. response.status_code)
 end
 
 return Client
