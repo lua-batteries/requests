@@ -9,11 +9,7 @@
 --- Get the remote address used to get this Response.
 
 local status = require("requests.status")
-
-string.startswith = function(self, sub)
-    -- return self:sub(1, string.len(sub) == sub
-    return self:find("^" .. sub) ~= nil
-end
+local cookie = require("requests.cookie")
 
 Response = {}
 
@@ -37,8 +33,18 @@ end
 -- Retrieve the cookies contained in the response.
 -- Note that invalid ‘Set-Cookie’ headers will be ignored.
 function Response:cookies()
-    local cookies = self.headers["cookies"] or self.headers["Cookies"]
-    -- TODO cookies
+    local jar = cookie.Jar:new()
+    jar:set_cookies(self.headers, self.url)
+
+    local cookies = {}
+
+    for _, domain_cookies in pairs(jar) do
+        for _, single_cookie in pairs(domain_cookies) do
+            table.insert(cookies, single_cookie)
+        end
+    end
+
+    return cookies
 end
 
 --- Get the content-length of this response, if known.
@@ -84,15 +90,15 @@ end
 
 --- Get the HTTP Version of this Response.
 function Response:version()
-    if self._http_status:startswith("HTTP/0.9") then
+    if self._http_status:find("^HTTP/0.9") ~= nil then
         return 0.9
-    elseif self._http_status:startswith("HTTP/1.0") then
+    elseif self._http_status:find("^HTTP/1.0") ~= nil then
         return 1.0
-    elseif self._http_status:startswith("HTTP/1.1") then
+    elseif self._http_status:find("^HTTP/1.1") ~= nil then
         return 1.1
-    elseif self._http_status:startswith("HTTP/2") then
+    elseif self._http_status:find("^HTTP/2") ~= nil then
         return 2
-    elseif self._http_status:startswith("HTTP/3") then
+    elseif self._http_status:find("^HTTP/3") ~= nil then
         return 3
     end
 

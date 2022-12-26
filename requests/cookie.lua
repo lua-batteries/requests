@@ -14,14 +14,6 @@
 
 local socket_url = require('socket.url')
 
-string.split = function(self, sep)
-    local splitted = {}
-    for sub_str in self:gmatch("([^" .. sep .. "]+)") do
-        table.insert(splitted, sub_str)
-    end
-    return splitted
-end
-
 cookie = {}
 
 --- A single HTTP cookie.
@@ -43,51 +35,47 @@ function cookie.parse(cookie)
 
     local parsed_cookie = {}
 
-    for _, single_cookie in pairs(cookie:split("; ")) do
-        local splitted_cookie = single_cookie:split("=")
+    for cookie_value in cookie:gmatch("(.-;%s)") do
+        cookie_value = cookie_value:sub(0, cookie_value:len() - 2) -- trim "; "
 
-        if #splitted_cookie == 0 then
-            error("cannot parse cookie string")
-        end
-
-        local name = splitted_cookie[1]
-        local value
-
-        if #splitted_cookie == 2 then
-            value = splitted_cookie[2]
-        elseif #splitted_cookie >= 2 then
-            value = single_cookie:gsub("^" .. name, "")
-        end
-
-        if #splitted_cookie == 1 then
-            if name == "Secure" then
-                parsed_cookie.secure = true
-            elseif name == "HttpOnly" then
-                parsed_cookie.http_only = true
-            else
-                parsed_cookie.name = name
-                parsed_cookie.value = "true"
-            end
+        if cookie_value:find("^Secure") ~= nil then
+            parsed_cookie.secure = true
+        elseif cookie_value:find("^HttpOnly") ~= nil then
+            parsed_cookie.http_only = true
         else
-            if name == "Expires" then
+            if cookie_value:find("^Expires") ~= nil then
                 -- TODO - parse value as time
                 -- https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Date
-                parsed_cookie.expires = value
-            elseif name == "Max-Age" then
-                parsed_cookie.max_age = tonumber(value)
-            elseif name == "Domain" then
-                parsed_cookie.domain = value
-            elseif name == "Path" then
-                parsed_cookie.path = value
-            elseif name == "SameSite" and value == "Strict" then
+                parsed_cookie.expires = cookie_value:sub(9, cookie_value:len())
+            elseif cookie_value:find("^Max-Age") ~= nil then
+                parsed_cookie.max_age = tonumber(cookie_value:sub(9, cookie_value:len()))
+            elseif cookie_value:find("^Domain") ~= nil then
+                parsed_cookie.domain = cookie_value:sub(8, cookie_value:len())
+            elseif cookie_value:find("^Path") ~= nil then
+                parsed_cookie.path = cookie_value:sub(6, cookie_value:len())
+            elseif cookie_value:find("^SameSite=Strict") ~= nil then
                 parsed_cookie.same_site_strict = true
-            elseif name == "SameSite" and value == "Lax" then
+            elseif cookie_value:find("^SameSite=Lax") ~= nil then
                 parsed_cookie.same_site_lax = true
-            elseif name == "SameSite" and value == "None" then
+            elseif cookie_value:find("^SameSite=None") ~= nil then
                 parsed_cookie.same_site_none = true
+            elseif cookie_value:find("^__Host-") ~= nil then
+                -- DO NOTHING
+            elseif cookie_value:find("^__Secure-") ~= nil then
+                -- DO NOTHING
             else
-                parsed_cookie.name = name
-                parsed_cookie.value = value
+                if parsed_cookie.name ~= nil then
+                    error("cannot parse multiple cookies at one time")
+                end
+
+                parsed_cookie.name = cookie_value:match("^[%w_]+=")
+
+                if parsed_cookie.name == nil then
+                    error("cannot parse cookie name")
+                end
+
+                parsed_cookie.value = cookie_value:sub(parsed_cookie.name:len() + 1, cookie_value:len())
+                parsed_cookie.name = parsed_cookie.name:sub(0, parsed_cookie.name:len() - 1)
             end
         end
     end
@@ -126,7 +114,19 @@ function cookie.Jar:add_cookie_str(cookie_str, url)
         self[domain] = {}
     end
 
+    -- print(parsed_cookie.name, parsed_cookie.value)
     table.insert(self[domain], parsed_cookie)
+end
+
+function cookie.Jar:_add_multiple_cookies(multiple_cookie_str, url)
+    local next_cookie = multiple_cookie_str:find(",%s[%w_]+=")
+
+    if next_cookie then
+        self:add_cookie_str(multiple_cookie_str:sub(0, next_cookie - 1), url)
+        self:_add_multiple_cookies(multiple_cookie_str:sub(next_cookie + 2, multiple_cookie_str:len()), url)
+    else
+        self:add_cookie_str(multiple_cookie_str, url)
+    end
 end
 
 --- Store a set of Set-Cookie header values received from url
@@ -134,10 +134,10 @@ function cookie.Jar:set_cookies(headers, url)
     assert(type(headers) == "table", "headers should be table")
     assert(type(url) == "string", "url should be string")
 
-    local cookie_str = headers["set-cookie"] or headers["Set-Cookie"]
+    local multiple_cookie_str = headers["set-cookie"] or headers["Set-Cookie"]
 
-    if cookie_str then
-        self:add_cookie_str(cookie_str, url)
+    if multiple_cookie_str then
+        self:_add_multiple_cookies(multiple_cookie_str, url)
     end
 end
 
@@ -147,9 +147,18 @@ function cookie.Jar:cookies(url)
     local parsed_url = socket_url.parse(url)
     local domain = parsed_url.host
     local cookie_str = ""
+    local cookies = self[domain]
 
-    if self[domain] then
-        for _, single_cookie in pairs(self[domain]) do
+    if not cookies then
+        local _, domain_end = domain:find("^[%w_]+%.")
+
+        if domain then
+            cookies = self[domain:sub(domain_end, domain:len())] or self[domain:sub(domain_end + 1, domain:len())]
+        end
+    end
+
+    if cookies then
+        for _, single_cookie in pairs(cookies) do
             if single_cookie.path == nil or single_cookie.path == "/" or single_cookie.path == parsed_url.path then
                 if cookie_str == "" then
                     cookie_str = single_cookie.name .. "=" .. single_cookie.value
