@@ -6,9 +6,11 @@
 -- The @{Client} holds a connection pool internally, so it is advised that you create one and reuse it.
 -- @classmod requests.Client
 
+
 local socket = require('socket')
 local socket_url = require('socket.url')
 local http = require('socket.http')
+local https = require('requests._https')
 local ltn12 = require('ltn12')
 local Response = require("requests.response")
 local cookie = require("requests.cookie")
@@ -151,7 +153,7 @@ function Client:new(kwargs)
         self._cookie_provider = kwargs.cookie_provider
     end
 
-    -- self.tcp = socket.tcp()
+    self.tcp = socket.tcp()
     -- self.tcp:setoption('keepalive', true)
     -- self.tcp:setoption('reuseaddr', true)
     return kwargs
@@ -273,17 +275,31 @@ function Client:request(method, url, kwargs)
         headers = request_headers,
         sink = ltn12.sink.table(response.sink),
         redirect = self.redirect,
-        -- create = function (nreqt)
-        --     return self.tcp
-        -- end,
         -- proxy = self.proxy
     }
+
+    local purl = socket_url.parse(url)
+
+    if request_headers["referer"] then
+        if purl.host ~= socket_url.parse(request_headers["referer"]).host then
+            self.tcp = socket.tcp()
+        end
+    end
+
+    if purl.scheme == "https" then
+        request_params.port = https.PORT
+        request_params.create = https.tcp(nreqt, self.tcp)
+    elseif purl.scheme == "http" then
+        request_params.create = function(nreqt)
+            return self.tcp
+        end
+    end
 
     local ok
     ok, response.status_code, response.headers, response.http_status = http.request(request_params)
 
     if ok == 1 then
-        if self.cookie_store and self._cookie_provider  then
+        if self.cookie_store and self._cookie_provider then
             self._cookie_provider:set_cookies(response.headers, url)
         end
 

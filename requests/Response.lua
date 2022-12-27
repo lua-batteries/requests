@@ -65,7 +65,7 @@ end
 function Response:json()
     local content_type = self.headers["content-type"] or self.headers["Content-Type"] or "unknown"
 
-    if not content_type:startswith("application/json") then
+    if not content_type:match("^application/json") ~= nil then
         error("cannot deserialize response as json because content-type is " .. content_type)
     end
 

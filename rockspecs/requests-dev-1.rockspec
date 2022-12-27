@@ -15,11 +15,11 @@ description = {
 }
 dependencies = {
   "lua >= 5.1",
-  "luasec"
+  "luasec >= 1.2.0"
   "luasocket",
-  # "md5",
-  # "lua-cjson",
-  # "xml",
+  -- "md5",
+  -- "lua-cjson",
+  -- "xml",
 }
 build = {
    type = "builtin",
