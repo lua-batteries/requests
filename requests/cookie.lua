@@ -13,6 +13,7 @@
 ]] --
 
 local socket_url = require('socket.url')
+local date = require("requests.date")
 
 cookie = {}
 
@@ -21,7 +22,7 @@ cookie = {}
 --     name: string, -- required
 --     value: string, -- required
 --     domain: string,
---     expires: string,
+--     expires: number,
 --     http_only: boolean,
 --     max_age: number,
 --     path: string,
@@ -33,58 +34,62 @@ cookie = {}
 function cookie.parse(cookie)
     assert(type(cookie) == "string", "cookie should be string")
 
-    local parsed_cookie = {}
+    local pcookie = {}
 
     for cookie_value in cookie:gmatch("(.-;%s)") do
         cookie_value = cookie_value:sub(0, cookie_value:len() - 2) -- trim "; "
 
         if cookie_value:find("^Secure") ~= nil then
-            parsed_cookie.secure = true
+            pcookie.secure = true
         elseif cookie_value:find("^HttpOnly") ~= nil then
-            parsed_cookie.http_only = true
+            pcookie.http_only = true
         else
             if cookie_value:find("^Expires") ~= nil then
-                -- TODO - parse value as time
-                -- https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Date
-                parsed_cookie.expires = cookie_value:sub(9, cookie_value:len())
+                pcookie.expires = date.parse(cookie_value:sub(9, cookie_value:len()))
             elseif cookie_value:find("^Max-Age") ~= nil then
-                parsed_cookie.max_age = tonumber(cookie_value:sub(9, cookie_value:len()))
+                pcookie.max_age = tonumber(cookie_value:sub(9, cookie_value:len()))
             elseif cookie_value:find("^Domain") ~= nil then
-                parsed_cookie.domain = cookie_value:sub(8, cookie_value:len())
+                pcookie.domain = cookie_value:sub(8, cookie_value:len())
             elseif cookie_value:find("^Path") ~= nil then
-                parsed_cookie.path = cookie_value:sub(6, cookie_value:len())
+                pcookie.path = cookie_value:sub(6, cookie_value:len())
             elseif cookie_value:find("^SameSite=Strict") ~= nil then
-                parsed_cookie.same_site_strict = true
+                pcookie.same_site_strict = true
             elseif cookie_value:find("^SameSite=Lax") ~= nil then
-                parsed_cookie.same_site_lax = true
+                pcookie.same_site_lax = true
             elseif cookie_value:find("^SameSite=None") ~= nil then
-                parsed_cookie.same_site_none = true
+                pcookie.same_site_none = true
             elseif cookie_value:find("^__Host-") ~= nil then
                 -- DO NOTHING
             elseif cookie_value:find("^__Secure-") ~= nil then
                 -- DO NOTHING
             else
-                if parsed_cookie.name ~= nil then
+                if pcookie.name ~= nil then
                     error("cannot parse multiple cookies at one time")
                 end
 
-                parsed_cookie.name = cookie_value:match("^[%w_]+=")
+                pcookie.name = cookie_value:match("^[%w_]+=")
 
-                if parsed_cookie.name == nil then
+                if pcookie.name == nil then
                     error("cannot parse cookie name")
                 end
 
-                parsed_cookie.value = cookie_value:sub(parsed_cookie.name:len() + 1, cookie_value:len())
-                parsed_cookie.name = parsed_cookie.name:sub(0, parsed_cookie.name:len() - 1)
+                pcookie.value = cookie_value:sub(pcookie.name:len() + 1, cookie_value:len())
+
+                -- trim ""
+                if pcookie.value:find("^\"") ~= nil then
+                    pcookie.value = pcookie.value:sub(2, pcookie.value:len() - 1)
+                end
+
+                pcookie.name = pcookie.name:sub(0, pcookie.name:len() - 1)
             end
         end
     end
 
-    if parsed_cookie.name == nil or parsed_cookie.value == nil then
+    if pcookie.name == nil or pcookie.value == nil then
         error("cannot parse cookie string name or value")
     end
 
-    return parsed_cookie
+    return pcookie
 end
 
 --- A good default CookieStore implementation.
@@ -159,11 +164,27 @@ function cookie.Jar:cookies(url)
 
     if cookies then
         for _, single_cookie in pairs(cookies) do
-            if single_cookie.path == nil or single_cookie.path == "/" or single_cookie.path == parsed_url.path then
+            local is_path = single_cookie.path == nil or single_cookie.path == "/" or
+                single_cookie.path == parsed_url.path
+            local is_scheme = true
+
+            if single_cookie.secure then
+                is_scheme = parsed_url.scheme == "https"
+            elseif single_cookie.http_only then
+                is_scheme = parsed_url.scheme == "http"
+            end
+
+            local is_expired = false
+
+            if single_cookie.expires then
+                is_expired = date.is_expired(single_cookie.expires)
+            end
+
+            if is_path and is_scheme and not is_expired then
                 if cookie_str == "" then
-                    cookie_str = single_cookie.name .. "=" .. single_cookie.value
+                    cookie_str = single_cookie.name .. "=\"" .. single_cookie.value .. "\""
                 else
-                    cookie_str = cookie_str .. "; " .. single_cookie.name .. "=" .. single_cookie.value
+                    cookie_str = cookie_str .. "; " .. single_cookie.name .. "=\"" .. single_cookie.value .. "\""
                 end
             end
         end

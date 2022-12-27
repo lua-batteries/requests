@@ -3,7 +3,7 @@ local cookie = require("requests.cookie")
 
 -- Container of default cookies.
 local jar = cookie.Jar:new()
-jar:add_cookie_str("cookie4=pre-baked; Path=/cookies", "https://httpbin.org")
+jar:add_cookie_str("cookie4=\"pre baked\"; Path=/cookies", "https://httpbin.org")
 
 local client = Client:new({
     cookie_store = true,

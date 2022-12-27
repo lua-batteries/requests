@@ -231,9 +231,9 @@ function Client:request(method, url, kwargs)
 
             for key, value in pairs(kwargs.cookies) do
                 if cookies == "" then
-                    cookies = tostring(key) .. "=" .. tostring(value)
+                    cookies = tostring(key) .. "=\"" .. tostring(value) .. "\""
                 else
-                    cookies = cookies .. "; " .. tostring(key) .. "=" .. tostring(value)
+                    cookies = cookies .. "; " .. tostring(key) .. "=\"" .. tostring(value) .. "\""
                 end
             end
         end
